@@ -1,0 +1,15 @@
+body { font-family: sans-serif; margin: 0; background: #f4f5fb; color: #222; }
+main { max-width: 1000px; margin: 0 auto; padding: 24px; }
+input { width: 100%; padding: 12px; font-size: 16px; border-radius: 8px; border: 1px solid #ccc; }
+#results { list-style: none; padding: 0; margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fill,minmax(140px,1fr)); gap: 8px; }
+#results li { background: white; border-radius: 8px; padding: 8px; cursor: pointer; border: 1px solid #ddd; }
+#results li:hover { background: #e9f1ff; }
+.card { margin-top: 20px; background: white; border-radius: 12px; padding: 20px; border: 1px solid #ddd; }
+.top { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
+img { width: 200px; height: 200px; object-fit: contain; background: #fafafa; border-radius: 8px; }
+.badges span { display: inline-block; margin-right: 6px; padding: 4px 8px; border-radius: 999px; background: #eef1f8; }
+.stats .row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.bar { height: 12px; background: #dce5ff; border-radius: 99px; }
+.bar-wrap { width: 300px; background: #f0f0f0; border-radius: 99px; }
+ul.tags { list-style: none; padding: 0; display: flex; gap: 8px; flex-wrap: wrap; }
+ul.tags li { background: #f3f6ff; padding: 4px 8px; border-radius: 8px; }
