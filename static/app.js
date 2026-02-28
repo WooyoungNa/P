@@ -35,7 +35,7 @@ function tableRowsEggMoves(eggMoves) {
     const typeColor = TYPE_COLORS[m.type] || '#666';
     return `
       <tr>
-        <td>${m.name}</td>
+        <td>${m.name}${m.post_oras ? ' <span class=\"new-tag\">*</span>' : ''}</td>
         <td><span class="type-badge" style="--type-color:${typeColor}">${m.type}</span></td>
         <td>${m.damage_class || '-'}</td>
         <td>${m.power || '-'}</td>
@@ -50,7 +50,7 @@ function tableRowsEggMoves(eggMoves) {
 function renderDetail(data) {
   const abilityRows = data.abilities.map((a) => `
     <tr>
-      <td>${a.name}${a.hidden ? ' <span class="hidden-tag">숨특</span>' : ''}</td>
+      <td>${a.name}${a.post_oras ? ' <span class="new-tag">*</span>' : ''}${a.hidden ? ' <span class="hidden-tag">숨특</span>' : ''}</td>
       <td class="left">${a.description || '설명 정보가 없습니다.'}</td>
     </tr>
   `).join('');
@@ -82,7 +82,7 @@ function renderDetail(data) {
         </div>
 
         <h3>특성 / 숨특</h3>
-        <p class="desc">특성은 배틀 중 지속적으로 발동하는 고유 능력이고, 숨특은 일반적으로 얻기 어려운 희귀 특성입니다.</p>
+        <p class="desc">특성은 배틀 중 지속적으로 발동하는 고유 능력이고, 숨특은 일반적으로 얻기 어려운 희귀 특성입니다. <b>*</b> 표시는 6세대(ORAS) 이후 추가된 특성입니다.</p>
         <table class="info-table">
           <thead><tr><th>특성</th><th>설명</th></tr></thead>
           <tbody>${abilityRows}</tbody>
@@ -111,7 +111,7 @@ function renderDetail(data) {
 
     <section class="card">
       <h3>알기술</h3>
-      <p class="desc">알기술은 교배를 통해서만 배울 수 있는 기술입니다. 타입, 분류(물리/특수/변화), 위력, 명중, PP, 효과를 표로 확인하세요.</p>
+      <p class="desc">알기술은 교배를 통해서만 배울 수 있는 기술입니다. 타입, 분류(물리/특수/변화), 위력, 명중, PP, 효과를 표로 확인하세요. <b>*</b> 표시는 6세대(ORAS) 이후 추가된 기술입니다.</p>
       <table class="info-table move-table">
         <thead>
           <tr>

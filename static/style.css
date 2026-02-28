@@ -19,6 +19,7 @@ input { width: 100%; padding: 10px 12px; font-size: 16px; border-radius: 8px; bo
 
 .type-badge { display: inline-block; color: #fff; font-weight: 700; border-radius: 999px; padding: 3px 9px; margin: 2px 4px 2px 0; background: var(--type-color, #666); font-size: 12px; }
 .hidden-tag { display: inline-block; background: #6b21a8; color: #fff; border-radius: 999px; font-size: 11px; padding: 2px 7px; }
+.new-tag { display: inline-block; background: #dc2626; color: #fff; border-radius: 999px; font-size: 11px; padding: 1px 6px; }
 
 .info-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .info-table th, .info-table td { border: 1px solid #d9e0ef; padding: 6px 7px; text-align: center; }
