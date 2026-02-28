@@ -1,0 +1,265 @@
+from __future__ import annotations
+
+import csv
+import io
+import json
+import sqlite3
+import subprocess
+import sys
+import threading
+import urllib.parse
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+DB_PATH = Path("data/pokewiki.db")
+CSV_BASE = "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v2/csv"
+KO_LANG_ID = "3"
+HOST = "0.0.0.0"
+PORT = 7860
+
+STAT_LABELS = {
+    "hp": "HP",
+    "attack": "공격",
+    "defense": "방어",
+    "special-attack": "특수공격",
+    "special-defense": "특수방어",
+    "speed": "스피드",
+}
+
+INDEX_HTML = Path("templates/index.html").read_text(encoding="utf-8")
+STYLE_CSS = Path("static/style.css").read_text(encoding="utf-8")
+APP_JS = Path("static/app.js").read_text(encoding="utf-8")
+
+
+def fetch_csv(name: str) -> list[dict[str, str]]:
+    url = f"{CSV_BASE}/{name}.csv"
+    with urllib.request.urlopen(url, timeout=120) as res:
+        raw = res.read().decode("utf-8")
+    return list(csv.DictReader(io.StringIO(raw)))
+
+
+def ensure_db() -> None:
+    if DB_PATH.exists():
+        try:
+            con = sqlite3.connect(DB_PATH)
+            count = con.execute("SELECT COUNT(*) FROM pokemon").fetchone()[0]
+            con.close()
+            if count > 0:
+                return
+        except Exception:
+            pass
+        DB_PATH.unlink(missing_ok=True)
+
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        build_database(DB_PATH)
+    except Exception as exc:
+        if DB_PATH.exists():
+            DB_PATH.unlink()
+        raise RuntimeError("데이터셋 초기화 실패: 네트워크에서 PokeAPI CSV를 내려받을 수 없습니다.") from exc
+
+
+def build_database(path: Path) -> None:
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.executescript(
+        """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE pokemon (id INTEGER PRIMARY KEY, identifier TEXT NOT NULL, korean_name TEXT NOT NULL);
+        CREATE INDEX idx_pokemon_korean_name ON pokemon(korean_name);
+        CREATE TABLE pokemon_stat (pokemon_id INTEGER, stat_identifier TEXT, base_stat INTEGER, PRIMARY KEY(pokemon_id, stat_identifier));
+        CREATE TABLE pokemon_ability (pokemon_id INTEGER, ability_id INTEGER, ability_name_ko TEXT, is_hidden INTEGER);
+        CREATE TABLE pokemon_type (pokemon_id INTEGER, type_id INTEGER, slot INTEGER, type_name_ko TEXT);
+        CREATE TABLE type_efficacy (attack_type_id INTEGER, target_type_id INTEGER, damage_factor INTEGER);
+        CREATE TABLE pokemon_egg_move (pokemon_id INTEGER, move_name_ko TEXT, move_identifier TEXT);
+        """
+    )
+
+    pokemon = fetch_csv("pokemon")
+    species = fetch_csv("pokemon_species")
+    species_names = fetch_csv("pokemon_species_names")
+    pokemon_stats = fetch_csv("pokemon_stats")
+    stats = fetch_csv("stats")
+    pokemon_abilities = fetch_csv("pokemon_abilities")
+    abilities = fetch_csv("abilities")
+    ability_names = fetch_csv("ability_names")
+    pokemon_types = fetch_csv("pokemon_types")
+    type_names = fetch_csv("type_names")
+    type_efficacy = fetch_csv("type_efficacy")
+    pokemon_moves = fetch_csv("pokemon_moves")
+    move_methods = fetch_csv("pokemon_move_methods")
+    moves = fetch_csv("moves")
+    move_names = fetch_csv("move_names")
+
+    species_to_ko = {r["pokemon_species_id"]: r["name"] for r in species_names if r["local_language_id"] == KO_LANG_ID}
+    species_id_to_identifier = {r["id"]: r["identifier"] for r in species}
+    pokemon_to_species = {r["id"]: r["species_id"] for r in pokemon}
+    pokemon_rows = []
+    for p in pokemon:
+        pid = int(p["id"])
+        sid = pokemon_to_species[str(pid)]
+        pokemon_rows.append((pid, p["identifier"], species_to_ko.get(sid, species_id_to_identifier.get(sid, p["identifier"]))))
+    cur.executemany("INSERT INTO pokemon VALUES(?,?,?)", pokemon_rows)
+
+    stat_id = {r["id"]: r["identifier"] for r in stats}
+    cur.executemany(
+        "INSERT INTO pokemon_stat VALUES(?,?,?)",
+        [(int(r["pokemon_id"]), stat_id[r["stat_id"]], int(r["base_stat"])) for r in pokemon_stats],
+    )
+
+    ability_ko = {r["ability_id"]: r["name"] for r in ability_names if r["local_language_id"] == KO_LANG_ID}
+    ability_id = {r["id"]: r["identifier"] for r in abilities}
+    cur.executemany(
+        "INSERT INTO pokemon_ability VALUES(?,?,?,?)",
+        [
+            (int(r["pokemon_id"]), int(r["ability_id"]), ability_ko.get(r["ability_id"], ability_id.get(r["ability_id"], "unknown")), int(r["is_hidden"]))
+            for r in pokemon_abilities
+        ],
+    )
+
+    type_ko = {r["type_id"]: r["name"] for r in type_names if r["local_language_id"] == KO_LANG_ID}
+    cur.executemany(
+        "INSERT INTO pokemon_type VALUES(?,?,?,?)",
+        [(int(r["pokemon_id"]), int(r["type_id"]), int(r["slot"]), type_ko.get(r["type_id"], r["type_id"])) for r in pokemon_types],
+    )
+
+    cur.executemany(
+        "INSERT INTO type_efficacy VALUES(?,?,?)",
+        [(int(r["damage_type_id"]), int(r["target_type_id"]), int(r["damage_factor"])) for r in type_efficacy],
+    )
+
+    egg_ids = {r["id"] for r in move_methods if r["identifier"] == "egg"}
+    move_ko = {r["move_id"]: r["name"] for r in move_names if r["local_language_id"] == KO_LANG_ID}
+    move_id = {r["id"]: r["identifier"] for r in moves}
+    seen: set[tuple[int, str]] = set()
+    egg_rows = []
+    for r in pokemon_moves:
+        if r["pokemon_move_method_id"] not in egg_ids:
+            continue
+        key = (int(r["pokemon_id"]), r["move_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        egg_rows.append((int(r["pokemon_id"]), move_ko.get(r["move_id"], move_id.get(r["move_id"], "unknown")), move_id.get(r["move_id"], "unknown")))
+    cur.executemany("INSERT INTO pokemon_egg_move VALUES(?,?,?)", egg_rows)
+    con.commit()
+    con.close()
+
+
+def get_connection() -> sqlite3.Connection:
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    return con
+
+
+def type_matchups(con: sqlite3.Connection, type_ids: list[int]) -> dict[str, list[str]]:
+    rows = con.execute("SELECT DISTINCT type_id, type_name_ko FROM pokemon_type").fetchall()
+    names = {int(r["type_id"]): r["type_name_ko"] for r in rows}
+    multipliers: dict[int, float] = {tid: 1.0 for tid in names}
+    for atk in names:
+        m = 1.0
+        for defending in type_ids:
+            row = con.execute(
+                "SELECT damage_factor FROM type_efficacy WHERE attack_type_id=? AND target_type_id=?",
+                (atk, defending),
+            ).fetchone()
+            if row:
+                m *= row["damage_factor"] / 100
+        multipliers[atk] = m
+    return {
+        "weakness": sorted([names[t] for t, m in multipliers.items() if m > 1]),
+        "resistance": sorted([names[t] for t, m in multipliers.items() if 0 < m < 1]),
+        "immune": sorted([names[t] for t, m in multipliers.items() if m == 0]),
+    }
+
+
+class Handler(BaseHTTPRequestHandler):
+    def _send(self, body: bytes, code: int = 200, ctype: str = "text/html; charset=utf-8") -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:  # noqa: N802
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        if path == "/":
+            self._send(INDEX_HTML.encode("utf-8"))
+            return
+        if path == "/static/style.css":
+            self._send(STYLE_CSS.encode("utf-8"), ctype="text/css; charset=utf-8")
+            return
+        if path == "/static/app.js":
+            self._send(APP_JS.encode("utf-8"), ctype="application/javascript; charset=utf-8")
+            return
+        if path == "/api/search":
+            q = urllib.parse.parse_qs(parsed.query).get("q", [""])[0].strip()
+            if not q:
+                self._send(b"[]", ctype="application/json; charset=utf-8")
+                return
+            con = get_connection()
+            rows = con.execute(
+                "SELECT id, korean_name, identifier FROM pokemon WHERE korean_name LIKE ? ORDER BY id LIMIT 20",
+                (f"{q}%",),
+            ).fetchall()
+            con.close()
+            self._send(json.dumps([dict(r) for r in rows], ensure_ascii=False).encode("utf-8"), ctype="application/json; charset=utf-8")
+            return
+        if path.startswith("/api/pokemon/"):
+            pid_text = path.replace("/api/pokemon/", "")
+            if not pid_text.isdigit():
+                self._send(b'{"error":"invalid id"}', code=400, ctype="application/json; charset=utf-8")
+                return
+            pid = int(pid_text)
+            con = get_connection()
+            p = con.execute("SELECT * FROM pokemon WHERE id=?", (pid,)).fetchone()
+            if p is None:
+                con.close()
+                self._send(b'{"error":"not found"}', code=404, ctype="application/json; charset=utf-8")
+                return
+            stats = con.execute("SELECT stat_identifier, base_stat FROM pokemon_stat WHERE pokemon_id=?", (pid,)).fetchall()
+            abilities = con.execute(
+                "SELECT ability_name_ko, is_hidden FROM pokemon_ability WHERE pokemon_id=? ORDER BY is_hidden, ability_id",
+                (pid,),
+            ).fetchall()
+            types = con.execute("SELECT type_id, type_name_ko FROM pokemon_type WHERE pokemon_id=? ORDER BY slot", (pid,)).fetchall()
+            eggs = con.execute("SELECT move_name_ko FROM pokemon_egg_move WHERE pokemon_id=? ORDER BY move_name_ko", (pid,)).fetchall()
+            payload = {
+                "id": p["id"],
+                "korean_name": p["korean_name"],
+                "identifier": p["identifier"],
+                "image": f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/{p['id']}.png",
+                "stats": [{"name": STAT_LABELS.get(r["stat_identifier"], r["stat_identifier"]), "value": r["base_stat"]} for r in stats],
+                "abilities": [{"name": r["ability_name_ko"], "hidden": bool(r["is_hidden"])} for r in abilities],
+                "types": [r["type_name_ko"] for r in types],
+                "type_matchups": type_matchups(con, [int(r["type_id"]) for r in types]),
+                "egg_moves": [r["move_name_ko"] for r in eggs],
+            }
+            con.close()
+            self._send(json.dumps(payload, ensure_ascii=False).encode("utf-8"), ctype="application/json; charset=utf-8")
+            return
+        self._send(b"Not found", 404, "text/plain; charset=utf-8")
+
+
+def launch_edge(url: str) -> None:
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        subprocess.Popen(["cmd", "/c", "start", "msedge", url], shell=False)
+    except Exception:
+        pass
+
+
+def run() -> None:
+    ensure_db()
+    url = f"http://127.0.0.1:{PORT}"
+    threading.Timer(1.0, lambda: launch_edge(url)).start()
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    print(f"Pokemon Wiki running at {url}")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    run()
