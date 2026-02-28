@@ -20,7 +20,7 @@ DEFAULT_KO_LANG_ID = "3"
 DEFAULT_EN_LANG_ID = "9"
 HOST = "0.0.0.0"
 PORT = 7860
-DB_SCHEMA_VERSION = 3
+DB_SCHEMA_VERSION = 4
 
 STAT_ORDER = ["hp", "attack", "defense", "special-attack", "special-defense", "speed"]
 STAT_LABELS = {
@@ -135,8 +135,8 @@ def translate_en_to_ko(text: str) -> str:
     if "increases evasion" in low and "sandstorm" in low:
         return "모래바람일 때 회피율이 상승한다."
 
-    # Generic fallback (avoid half-translated mixed sentence)
-    return f"(영문 설명) {t}"
+    # Generic fallback: keep UI fully Korean
+    return "공식 한글 설명이 없습니다."
 
 
 def choose_localized_text(ko_primary: str | None, ko_secondary: str | None, en_primary: str | None, en_secondary: str | None) -> str:
@@ -145,8 +145,11 @@ def choose_localized_text(ko_primary: str | None, ko_secondary: str | None, en_p
             return clean_effect_text(cand)
     for cand in [en_primary, en_secondary]:
         if cand and cand.strip():
-            return translate_en_to_ko(cand)
-    return "효과 정보가 없습니다."
+            translated = translate_en_to_ko(cand)
+            if re.search(r"[A-Za-z]", translated):
+                return "공식 한글 설명이 없습니다."
+            return translated
+    return "공식 한글 설명이 없습니다."
 
 def fetch_csv(name: str) -> list[dict[str, str]]:
     url = f"{CSV_BASE}/{name}.csv"
@@ -664,10 +667,13 @@ def ordered_stats(rows: list[sqlite3.Row]) -> tuple[list[dict[str, int | str]], 
 
 def localize_runtime_text(text: str | None) -> str:
     if not text:
-        return "효과 정보가 없습니다."
+        return "공식 한글 설명이 없습니다."
     t = clean_effect_text(text)
     if re.search(r"[A-Za-z]", t):
-        return translate_en_to_ko(t)
+        translated = translate_en_to_ko(t)
+        if re.search(r"[A-Za-z]", translated):
+            return "공식 한글 설명이 없습니다."
+        return translated
     return t
 
 class Handler(BaseHTTPRequestHandler):
