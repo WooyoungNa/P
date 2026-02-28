@@ -14,8 +14,8 @@ from pathlib import Path
 
 DB_PATH = Path("data/pokewiki.db")
 CSV_BASE = "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v2/csv"
-KO_LANG_ID = "3"
-EN_LANG_ID = "9"
+DEFAULT_KO_LANG_ID = "3"
+DEFAULT_EN_LANG_ID = "9"
 HOST = "0.0.0.0"
 PORT = 7860
 
@@ -34,6 +34,12 @@ STYLE_CSS = Path("static/style.css").read_text(encoding="utf-8")
 APP_JS = Path("static/app.js").read_text(encoding="utf-8")
 
 
+def resolve_language_ids(languages: list[dict[str, str]]) -> tuple[str, str]:
+    ko = next((r["id"] for r in languages if r.get("identifier") == "ko"), DEFAULT_KO_LANG_ID)
+    en = next((r["id"] for r in languages if r.get("identifier") == "en"), DEFAULT_EN_LANG_ID)
+    return ko, en
+
+
 def fetch_csv(name: str) -> list[dict[str, str]]:
     url = f"{CSV_BASE}/{name}.csv"
     with urllib.request.urlopen(url, timeout=120) as res:
@@ -46,13 +52,15 @@ def ensure_db() -> None:
         try:
             con = sqlite3.connect(DB_PATH)
             count = con.execute("SELECT COUNT(*) FROM pokemon").fetchone()[0]
+            pokemon_cols = {r[1] for r in con.execute("PRAGMA table_info(pokemon)").fetchall()}
             ability_cols = {r[1] for r in con.execute("PRAGMA table_info(pokemon_ability)").fetchall()}
             egg_cols = {r[1] for r in con.execute("PRAGMA table_info(pokemon_egg_move)").fetchall()}
+            level_cols = {r[1] for r in con.execute("PRAGMA table_info(pokemon_level_move)").fetchall()}
             con.close()
-            has_new_schema = {"ability_effect_ko", "is_post_oras"}.issubset(ability_cols) and {
+            has_new_schema = {"is_post_oras"}.issubset(pokemon_cols) and {"ability_effect_ko", "is_post_oras"}.issubset(ability_cols) and {
                 "effect_text_ko",
                 "is_post_oras",
-            }.issubset(egg_cols)
+            }.issubset(egg_cols) and {"move_name_ko", "learn_level", "is_post_oras"}.issubset(level_cols)
             if count > 0 and has_new_schema:
                 return
         except Exception:
@@ -74,7 +82,7 @@ def build_database(path: Path) -> None:
     cur.executescript(
         """
         PRAGMA journal_mode=WAL;
-        CREATE TABLE pokemon (id INTEGER PRIMARY KEY, identifier TEXT NOT NULL, korean_name TEXT NOT NULL);
+        CREATE TABLE pokemon (id INTEGER PRIMARY KEY, identifier TEXT NOT NULL, korean_name TEXT NOT NULL, is_post_oras INTEGER NOT NULL);
         CREATE INDEX idx_pokemon_korean_name ON pokemon(korean_name);
 
         CREATE TABLE pokemon_stat (pokemon_id INTEGER, stat_identifier TEXT, base_stat INTEGER, PRIMARY KEY(pokemon_id, stat_identifier));
@@ -104,8 +112,24 @@ def build_database(path: Path) -> None:
             effect_text_ko TEXT,
             is_post_oras INTEGER
         );
+
+        CREATE TABLE pokemon_level_move (
+            pokemon_id INTEGER,
+            move_name_ko TEXT,
+            type_name_ko TEXT,
+            damage_class_ko TEXT,
+            power INTEGER,
+            accuracy INTEGER,
+            pp INTEGER,
+            effect_text_ko TEXT,
+            learn_level INTEGER,
+            is_post_oras INTEGER
+        );
         """
     )
+
+    languages = fetch_csv("languages")
+    ko_lang_id, en_lang_id = resolve_language_ids(languages)
 
     pokemon = fetch_csv("pokemon")
     species = fetch_csv("pokemon_species")
@@ -127,8 +151,9 @@ def build_database(path: Path) -> None:
     damage_classes = fetch_csv("move_damage_classes")
     damage_class_names = fetch_csv("move_damage_class_prose")
 
-    species_to_ko = {r["pokemon_species_id"]: r["name"] for r in species_names if r["local_language_id"] == KO_LANG_ID}
+    species_to_ko = {r["pokemon_species_id"]: r["name"] for r in species_names if r["local_language_id"] == ko_lang_id}
     species_id_to_identifier = {r["id"]: r["identifier"] for r in species}
+    species_generation = {r["id"]: int(r["generation_id"] or 0) for r in species}
     pokemon_to_species = {r["id"]: r["species_id"] for r in pokemon}
 
     pokemon_rows = []
@@ -136,8 +161,9 @@ def build_database(path: Path) -> None:
         pid = int(p["id"])
         sid = pokemon_to_species[str(pid)]
         korean_name = species_to_ko.get(sid, species_id_to_identifier.get(sid, p["identifier"]))
-        pokemon_rows.append((pid, p["identifier"], korean_name))
-    cur.executemany("INSERT INTO pokemon VALUES(?,?,?)", pokemon_rows)
+        is_post_oras = 1 if species_generation.get(sid, 0) > 6 else 0
+        pokemon_rows.append((pid, p["identifier"], korean_name, is_post_oras))
+    cur.executemany("INSERT INTO pokemon VALUES(?,?,?,?)", pokemon_rows)
 
     stat_id_to_identifier = {r["id"]: r["identifier"] for r in stats}
     cur.executemany(
@@ -145,9 +171,9 @@ def build_database(path: Path) -> None:
         [(int(r["pokemon_id"]), stat_id_to_identifier[r["stat_id"]], int(r["base_stat"])) for r in pokemon_stats],
     )
 
-    ability_name_ko = {r["ability_id"]: r["name"] for r in ability_names if r["local_language_id"] == KO_LANG_ID}
-    ability_effect_ko = {r["ability_id"]: (r["short_effect"] or r["effect"]) for r in ability_prose if r["local_language_id"] == KO_LANG_ID}
-    ability_effect_en = {r["ability_id"]: (r["short_effect"] or r["effect"]) for r in ability_prose if r["local_language_id"] == EN_LANG_ID}
+    ability_name_ko = {r["ability_id"]: r["name"] for r in ability_names if r["local_language_id"] == ko_lang_id}
+    ability_effect_ko = {r["ability_id"]: (r["short_effect"] or r["effect"]) for r in ability_prose if r["local_language_id"] == ko_lang_id}
+    ability_effect_en = {r["ability_id"]: (r["short_effect"] or r["effect"]) for r in ability_prose if r["local_language_id"] == en_lang_id}
     ability_identifier = {r["id"]: r["identifier"] for r in abilities}
     ability_generation = {r["id"]: int(r["generation_id"]) for r in abilities}
 
@@ -167,7 +193,7 @@ def build_database(path: Path) -> None:
         )
     cur.executemany("INSERT INTO pokemon_ability VALUES(?,?,?,?,?,?)", ability_rows)
 
-    type_name_ko = {r["type_id"]: r["name"] for r in type_names if r["local_language_id"] == KO_LANG_ID}
+    type_name_ko = {r["type_id"]: r["name"] for r in type_names if r["local_language_id"] == ko_lang_id}
     cur.executemany(
         "INSERT INTO pokemon_type VALUES(?,?,?,?)",
         [(int(r["pokemon_id"]), int(r["type_id"]), int(r["slot"]), type_name_ko.get(r["type_id"], r["type_id"])) for r in pokemon_types],
@@ -179,13 +205,13 @@ def build_database(path: Path) -> None:
     )
 
     egg_method_ids = {r["id"] for r in move_methods if r["identifier"] == "egg"}
-    move_name_ko = {r["move_id"]: r["name"] for r in move_names if r["local_language_id"] == KO_LANG_ID}
+    move_name_ko = {r["move_id"]: r["name"] for r in move_names if r["local_language_id"] == ko_lang_id}
     move_identifier = {r["id"]: r["identifier"] for r in moves}
     move_detail = {r["id"]: r for r in moves}
-    move_effect_ko = {r["move_effect_id"]: (r["short_effect"] or r["effect"]) for r in move_effect_prose if r["local_language_id"] == KO_LANG_ID}
-    move_effect_en = {r["move_effect_id"]: (r["short_effect"] or r["effect"]) for r in move_effect_prose if r["local_language_id"] == EN_LANG_ID}
+    move_effect_ko = {r["move_effect_id"]: (r["short_effect"] or r["effect"]) for r in move_effect_prose if r["local_language_id"] == ko_lang_id}
+    move_effect_en = {r["move_effect_id"]: (r["short_effect"] or r["effect"]) for r in move_effect_prose if r["local_language_id"] == en_lang_id}
     damage_class_identifier = {r["id"]: r["identifier"] for r in damage_classes}
-    damage_class_ko = {r["move_damage_class_id"]: r["name"] for r in damage_class_names if r["local_language_id"] == KO_LANG_ID}
+    damage_class_ko = {r["move_damage_class_id"]: r["name"] for r in damage_class_names if r["local_language_id"] == ko_lang_id}
 
     seen: set[tuple[int, str]] = set()
     egg_rows = []
@@ -220,6 +246,41 @@ def build_database(path: Path) -> None:
             )
         )
     cur.executemany("INSERT INTO pokemon_egg_move VALUES(?,?,?,?,?,?,?,?,?,?)", egg_rows)
+
+    level_method_ids = {r["id"] for r in move_methods if r["identifier"] == "level-up"}
+    level_rows = []
+    seen_level: set[tuple[int, str, int]] = set()
+    for r in pokemon_moves:
+        if r["pokemon_move_method_id"] not in level_method_ids:
+            continue
+        m = move_detail.get(r["move_id"])
+        if not m:
+            continue
+        lvl = int(r["level"] or 0)
+        key = (int(r["pokemon_id"]), r["move_id"], lvl)
+        if key in seen_level:
+            continue
+        seen_level.add(key)
+
+        effect_tpl = move_effect_ko.get(m["effect_id"]) or move_effect_en.get(m["effect_id"]) or "효과 정보가 없습니다."
+        effect_text = effect_tpl.replace("$effect_chance", m["effect_chance"] or "-")
+        dmg_cls = damage_class_ko.get(m["damage_class_id"], damage_class_identifier.get(m["damage_class_id"], "미상"))
+        is_post_oras = 1 if int(m["generation_id"] or 0) > 6 else 0
+        level_rows.append(
+            (
+                int(r["pokemon_id"]),
+                move_name_ko.get(r["move_id"], move_identifier.get(r["move_id"], "unknown")),
+                type_name_ko.get(m["type_id"], m["type_id"]),
+                dmg_cls,
+                int(m["power"] or 0),
+                int(m["accuracy"] or 0),
+                int(m["pp"] or 0),
+                effect_text,
+                lvl,
+                is_post_oras,
+            )
+        )
+    cur.executemany("INSERT INTO pokemon_level_move VALUES(?,?,?,?,?,?,?,?,?,?)", level_rows)
 
     con.commit()
     con.close()
@@ -335,11 +396,21 @@ class Handler(BaseHTTPRequestHandler):
                 """,
                 (pid,),
             ).fetchall()
+            level_moves = con.execute(
+                """
+                SELECT move_name_ko, type_name_ko, damage_class_ko, power, accuracy, pp, effect_text_ko, learn_level, is_post_oras
+                FROM pokemon_level_move
+                WHERE pokemon_id=?
+                ORDER BY learn_level, move_name_ko
+                """,
+                (pid,),
+            ).fetchall()
 
             payload = {
                 "id": p["id"],
                 "korean_name": p["korean_name"],
                 "identifier": p["identifier"],
+                "post_oras": bool(p["is_post_oras"]),
                 "image": f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/{p['id']}.png",
                 "types": [r["type_name_ko"] for r in types],
                 "stats": stats,
@@ -366,6 +437,20 @@ class Handler(BaseHTTPRequestHandler):
                         "post_oras": bool(r["is_post_oras"]),
                     }
                     for r in egg_moves
+                ],
+                "level_moves": [
+                    {
+                        "name": r["move_name_ko"],
+                        "type": r["type_name_ko"],
+                        "damage_class": r["damage_class_ko"],
+                        "power": r["power"],
+                        "accuracy": r["accuracy"],
+                        "pp": r["pp"],
+                        "effect": r["effect_text_ko"],
+                        "level": r["learn_level"],
+                        "post_oras": bool(r["is_post_oras"]),
+                    }
+                    for r in level_moves
                 ],
             }
             con.close()

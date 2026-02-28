@@ -35,7 +35,30 @@ function tableRowsEggMoves(eggMoves) {
     const typeColor = TYPE_COLORS[m.type] || '#666';
     return `
       <tr>
-        <td>${m.name}${m.post_oras ? ' <span class=\"new-tag\">*</span>' : ''}</td>
+        <td>${m.name}${m.post_oras ? ' <span class="new-tag">*</span>' : ''}</td>
+        <td><span class="type-badge" style="--type-color:${typeColor}">${m.type}</span></td>
+        <td>${m.damage_class || '-'}</td>
+        <td>${m.power || '-'}</td>
+        <td>${m.accuracy || '-'}</td>
+        <td>${m.pp || '-'}</td>
+        <td class="left">${m.effect || '-'}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+
+
+function tableRowsLevelMoves(levelMoves) {
+  if (!levelMoves.length) {
+    return '<tr><td colspan="8">레벨업으로 배우는 기술이 없습니다.</td></tr>';
+  }
+  return levelMoves.map((m) => {
+    const typeColor = TYPE_COLORS[m.type] || '#666';
+    return `
+      <tr>
+        <td>${m.level}</td>
+        <td>${m.name}${m.post_oras ? ' <span class="new-tag">*</span>' : ''}</td>
         <td><span class="type-badge" style="--type-color:${typeColor}">${m.type}</span></td>
         <td>${m.damage_class || '-'}</td>
         <td>${m.power || '-'}</td>
@@ -62,62 +85,62 @@ function renderDetail(data) {
       <tr>
         <th>${s.name}</th>
         <td class="stat-value">${s.value}</td>
-        <td>
-          <div class="bar-track"><div class="bar-fill" style="width:${width}%; background:${color}"></div></div>
-        </td>
+        <td><div class="bar-track"><div class="bar-fill" style="width:${width}%; background:${color}"></div></div></td>
       </tr>
     `;
   }).join('');
 
   detailEl.innerHTML = `
-    <section class="card compact-grid">
-      <div class="panel">
-        <div class="identity">
+    <section class="card">
+      <header class="pokemon-head">
+        <h2>${data.korean_name} <small>#${data.id}</small></h2>
+        <p class="mono">${data.identifier}</p>
+        <div>${data.types.map((t) => `<span class="type-badge" style="--type-color:${TYPE_COLORS[t] || '#666'}">${t}</span>`).join(' ')}</div>
+        <p class="oras-line">ORAS 이후 등장: <b>${data.post_oras ? 'O' : 'X'}</b></p>
+      </header>
+
+      <div class="top-row">
+        <div class="sprite-wrap">
           <img src="${data.image}" alt="${data.korean_name}" />
-          <div>
-            <h2>${data.korean_name} <small>#${data.id}</small></h2>
-            <p class="mono">${data.identifier}</p>
-            <div>${data.types.map((t) => `<span class="type-badge" style="--type-color:${TYPE_COLORS[t] || '#666'}">${t}</span>`).join(' ')}</div>
-          </div>
         </div>
 
-        <h3>특성 / 숨특</h3>
-        <p class="desc">특성은 배틀 중 지속적으로 발동하는 고유 능력이고, 숨특은 일반적으로 얻기 어려운 희귀 특성입니다. <b>*</b> 표시는 6세대(ORAS) 이후 추가된 특성입니다.</p>
-        <table class="info-table">
-          <thead><tr><th>특성</th><th>설명</th></tr></thead>
-          <tbody>${abilityRows}</tbody>
-        </table>
-
-        <h3>타입 상성 (약점 / 반감 / 무효)</h3>
-        <div class="matchup-block">
-          <strong>약점</strong>
-          <div>${data.type_matchups.weakness.map(matchupBadge).join(' ') || '없음'}</div>
-          <strong>반감</strong>
-          <div>${data.type_matchups.resistance.map(matchupBadge).join(' ') || '없음'}</div>
-          <strong>무효</strong>
-          <div>${data.type_matchups.immune.map(matchupBadge).join(' ') || '없음'}</div>
+        <div class="panel">
+          <h3>종족값 분포</h3>
+          <table class="info-table compact-width">
+            <thead><tr><th>능력치</th><th>수치</th><th>분포</th></tr></thead>
+            <tbody>${statRows}</tbody>
+            <tfoot><tr><th>총합</th><td colspan="2">${data.stat_total}</td></tr></tfoot>
+          </table>
         </div>
       </div>
 
-      <div class="panel">
-        <h3>종족값 분포</h3>
-        <table class="info-table">
-          <thead><tr><th>능력치</th><th>수치</th><th>분포</th></tr></thead>
-          <tbody>${statRows}</tbody>
-          <tfoot><tr><th>총합</th><td colspan="2">${data.stat_total}</td></tr></tfoot>
-        </table>
+      <h3>특성 / 숨특</h3>
+      <p class="desc"><b>*</b> 표시는 6세대(ORAS) 이후 추가된 특성입니다.</p>
+      <table class="info-table compact-width">
+        <thead><tr><th>특성</th><th>설명</th></tr></thead>
+        <tbody>${abilityRows}</tbody>
+      </table>
+
+      <h3>타입 상성 (약점 / 반감 / 무효)</h3>
+      <div class="matchup-block">
+        <strong>약점</strong><div>${data.type_matchups.weakness.map(matchupBadge).join(' ') || '없음'}</div>
+        <strong>반감</strong><div>${data.type_matchups.resistance.map(matchupBadge).join(' ') || '없음'}</div>
+        <strong>무효</strong><div>${data.type_matchups.immune.map(matchupBadge).join(' ') || '없음'}</div>
       </div>
+
+      <h3>레벨업 기술</h3>
+      <p class="desc">레벨업으로 배우는 기술 목록입니다. <b>*</b> 표시는 6세대(ORAS) 이후 추가된 기술입니다.</p>
+      <table class="info-table move-table">
+        <thead><tr><th>레벨</th><th>기술명</th><th>타입</th><th>분류</th><th>위력</th><th>명중</th><th>PP</th><th>효과</th></tr></thead>
+        <tbody>${tableRowsLevelMoves(data.level_moves || [])}</tbody>
+      </table>
     </section>
 
     <section class="card">
       <h3>알기술</h3>
-      <p class="desc">알기술은 교배를 통해서만 배울 수 있는 기술입니다. 타입, 분류(물리/특수/변화), 위력, 명중, PP, 효과를 표로 확인하세요. <b>*</b> 표시는 6세대(ORAS) 이후 추가된 기술입니다.</p>
+      <p class="desc"><b>*</b> 표시는 6세대(ORAS) 이후 추가된 기술입니다.</p>
       <table class="info-table move-table">
-        <thead>
-          <tr>
-            <th>기술명</th><th>타입</th><th>분류</th><th>위력</th><th>명중</th><th>PP</th><th>효과</th>
-          </tr>
-        </thead>
+        <thead><tr><th>기술명</th><th>타입</th><th>분류</th><th>위력</th><th>명중</th><th>PP</th><th>효과</th></tr></thead>
         <tbody>${tableRowsEggMoves(data.egg_moves)}</tbody>
       </table>
     </section>
