@@ -20,6 +20,7 @@ DEFAULT_KO_LANG_ID = "3"
 DEFAULT_EN_LANG_ID = "9"
 HOST = "0.0.0.0"
 PORT = 7860
+DB_SCHEMA_VERSION = 3
 
 STAT_ORDER = ["hp", "attack", "defense", "special-attack", "special-defense", "speed"]
 STAT_LABELS = {
@@ -77,27 +78,65 @@ def clean_effect_text(text: str) -> str:
 
 def translate_en_to_ko(text: str) -> str:
     t = clean_effect_text(text)
-    reps = [
-        ("Has a ", ""),
-        (" chance of ", " 확률로 "),
-        ("attacking Pokémon on contact", "접촉한 상대를 공격했을 때"),
-        ("Inflicts regular damage with no additional effect.", "추가 효과 없이 일반적인 데미지를 준다."),
-        ("Causes one-hit KO.", "일격에 상대를 쓰러뜨릴 수 있다."),
-        ("Prevents paralysis", "마비 상태가 되지 않는다"),
-        ("Protects against sandstorm damage", "모래바람 데미지를 받지 않는다"),
-        ("Increases evasion", "회피율이 상승한다"),
-        ("during a sandstorm", "모래바람일 때"),
-        ("Inflicts", "가한다"),
-        ("damage", "데미지"),
-        ("user", "사용자"),
-        ("target", "상대"),
-        ("Raises", "상승시킨다"),
-        ("Lowers", "낮춘다"),
-        ("and", "및"),
-    ]
-    for a,b in reps:
-        t = t.replace(a,b)
-    return t
+    low = t.lower()
+
+    # Common full-sentence patterns first (avoid mixed ko/en output)
+    m = re.search(r"(\d+)% chance to make the target flinch\.?", low)
+    if m:
+        return f"{m.group(1)}% 확률로 상대를 풀죽게 한다."
+
+    if "inflicts regular damage with no additional effect" in low:
+        return "추가 효과 없이 일반적인 데미지를 준다."
+
+    if "causes one-hit ko" in low:
+        return "일격에 상대를 쓰러뜨릴 수 있다."
+
+    if "confuses the target" in low:
+        return "상대를 혼란 상태로 만든다."
+
+    if "heals the user by half its max hp" in low:
+        return "사용자의 최대 HP 절반만큼 회복한다."
+
+    if "equal to the user's level" in low or "equal to the user’s level" in low:
+        return "사용자의 레벨과 같은 데미지를 준다."
+
+    if "protecting the user from further damage or status changes until it breaks" in low and "1/4" in low:
+        return "사용자의 최대 HP의 1/4을 소비해 분신인 인형을 만들고, 인형이 사라질 때까지 데미지와 상태이상을 막는다."
+
+    # stage up/down patterns
+    stat_map = {
+        "special defense": "특수방어",
+        "special attack": "특수공격",
+        "attack": "공격",
+        "defense": "방어",
+        "speed": "스피드",
+        "accuracy": "명중",
+        "evasion": "회피",
+    }
+    stage_map = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6"}
+
+    m = re.search(r"lowers the target'?s? ([a-z ]+) by (one|two|three|four|five|six) stages?", low)
+    if m:
+        stat = stat_map.get(m.group(1).strip(), m.group(1).strip())
+        stage = stage_map.get(m.group(2), m.group(2))
+        return f"상대의 {stat}(을/를) {stage}랭크 떨어뜨린다."
+
+    m = re.search(r"raises the user'?s? ([a-z ]+) by (one|two|three|four|five|six) stages?", low)
+    if m:
+        stat = stat_map.get(m.group(1).strip(), m.group(1).strip())
+        stage = stage_map.get(m.group(2), m.group(2))
+        return f"사용자의 {stat}(을/를) {stage}랭크 올린다."
+
+    # Status immunity / weather snippets
+    if "prevents paralysis" in low:
+        return "마비 상태가 되지 않는다."
+    if "protects against sandstorm damage" in low:
+        return "모래바람 데미지를 받지 않는다."
+    if "increases evasion" in low and "sandstorm" in low:
+        return "모래바람일 때 회피율이 상승한다."
+
+    # Generic fallback (avoid half-translated mixed sentence)
+    return f"(영문 설명) {t}"
 
 
 def choose_localized_text(ko_primary: str | None, ko_secondary: str | None, en_primary: str | None, en_secondary: str | None) -> str:
@@ -121,6 +160,7 @@ def ensure_db() -> None:
         try:
             con = sqlite3.connect(DB_PATH)
             count = con.execute("SELECT COUNT(*) FROM pokemon").fetchone()[0]
+            user_version = con.execute("PRAGMA user_version").fetchone()[0]
             pokemon_cols = {r[1] for r in con.execute("PRAGMA table_info(pokemon)").fetchall()}
             form_cols = {r[1] for r in con.execute("PRAGMA table_info(pokemon_form_meta)").fetchall()}
             ability_cols = {r[1] for r in con.execute("PRAGMA table_info(pokemon_ability)").fetchall()}
@@ -141,7 +181,7 @@ def ensure_db() -> None:
                 "pokemon_id",
                 "depth",
             }.issubset(evo_cols) and {"from_pokemon_id", "to_pokemon_id", "condition_text"}.issubset(edge_cols)
-            if count > 0 and has_new_schema:
+            if count > 0 and has_new_schema and user_version == DB_SCHEMA_VERSION:
                 return
         except Exception:
             pass
@@ -575,6 +615,7 @@ def build_database(path: Path) -> None:
     cur.executemany("INSERT INTO evolution_member VALUES(?,?,?,?,?,?)", evo_rows)
     cur.executemany("INSERT INTO evolution_edge VALUES(?,?,?,?,?)", edge_rows)
 
+    cur.execute(f"PRAGMA user_version={DB_SCHEMA_VERSION}")
     con.commit()
     con.close()
 
@@ -618,6 +659,16 @@ def ordered_stats(rows: list[sqlite3.Row]) -> tuple[list[dict[str, int | str]], 
     total = sum(item["value"] for item in ordered)
     return ordered, total
 
+
+
+
+def localize_runtime_text(text: str | None) -> str:
+    if not text:
+        return "효과 정보가 없습니다."
+    t = clean_effect_text(text)
+    if re.search(r"[A-Za-z]", t):
+        return translate_en_to_ko(t)
+    return t
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self, body: bytes, code: int = 200, ctype: str = "text/html; charset=utf-8") -> None:
@@ -746,7 +797,7 @@ class Handler(BaseHTTPRequestHandler):
                 "abilities": [
                     {
                         "name": r["ability_name_ko"],
-                        "description": r["ability_effect_ko"],
+                        "description": localize_runtime_text(r["ability_effect_ko"]),
                         "hidden": bool(r["is_hidden"]),
                         "post_oras": bool(r["is_post_oras"]),
                     }
@@ -761,7 +812,7 @@ class Handler(BaseHTTPRequestHandler):
                         "power": r["power"],
                         "accuracy": r["accuracy"],
                         "pp": r["pp"],
-                        "effect": r["effect_text_ko"],
+                        "effect": localize_runtime_text(r["effect_text_ko"]),
                         "level": r["learn_level"],
                         "post_oras": bool(r["is_post_oras"]),
                     }
@@ -775,7 +826,7 @@ class Handler(BaseHTTPRequestHandler):
                         "power": r["power"],
                         "accuracy": r["accuracy"],
                         "pp": r["pp"],
-                        "effect": r["effect_text_ko"],
+                        "effect": localize_runtime_text(r["effect_text_ko"]),
                         "post_oras": bool(r["is_post_oras"]),
                     }
                     for r in egg_moves
