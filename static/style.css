@@ -36,12 +36,16 @@ h3 { margin: 14px 0 6px; }
 .bar-fill { height: 100%; border-radius: 999px; }
 .matchup-block { display: grid; grid-template-columns: 76px 1fr; gap: 6px 10px; align-items: center; }
 .move-table td { vertical-align: top; }
+.move-table .col-type { width: 140px; }
 
-.evo-tree { border: 1px solid #2d3a55; border-radius: 10px; padding: 10px; background: #0f172a; }
-.evo-row { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
-.evo-arrow { text-align: center; color: #9ab0d8; margin: 4px 0; }
-.evo-node { width: 120px; border: 1px solid #2d3a55; border-radius: 8px; padding: 6px; text-align: center; background: #11182b; }
+.evo-tree { border: 1px solid #2d3a55; border-radius: 10px; padding: 10px; background: #0f172a; display: grid; gap: 10px; }
+.evo-chain-row { display: flex; align-items: center; gap: 10px; overflow-x: auto; padding-bottom: 2px; }
+.evo-link { min-width: 110px; text-align: center; color: #9ab0d8; }
+.evo-cond { font-size: 12px; margin-bottom: 2px; color: #c1d1ef; }
+.evo-arrow-line { font-size: 20px; line-height: 1; }
+.evo-node { width: 120px; border: 1px solid #2d3a55; border-radius: 8px; padding: 6px; text-align: center; background: #11182b; flex: 0 0 auto; color: inherit; font: inherit; cursor: pointer; }
 .evo-node.special { border-color: #8b5cf6; }
+.evo-node:hover { border-color: #5b7ab2; }
 .evo-node img { width: 86px; height: 86px; object-fit: contain; background: #fff; border-radius: 6px; }
 .evo-node div { font-size: 12px; margin-top: 6px; }
 

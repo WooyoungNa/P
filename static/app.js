@@ -68,28 +68,71 @@ function tableRowsEggMoves(eggMoves) {
   }).join('');
 }
 
-function renderEvolutionTree(tree) {
+function renderEvolutionTree(tree, edges) {
   if (!tree || !tree.length) return '<p class="desc">진화 트리 정보가 없습니다.</p>';
-  const groups = new Map();
-  for (const node of tree) {
-    if (!groups.has(node.depth)) groups.set(node.depth, []);
-    groups.get(node.depth).push(node);
+  const nodeMap = new Map(tree.map((n) => [n.pokemon_id, n]));
+  const validEdges = (edges || []).filter((e) => nodeMap.has(e.from) && nodeMap.has(e.to));
+
+  if (!validEdges.length) {
+    return `<div class="evo-chain-row">${tree.map((n) => `
+      <button class="evo-node${n.is_special ? ' special' : ''}" data-id="${n.pokemon_id}">
+        <img src="${n.image}" alt="${n.name}" />
+        <div>${n.name}</div>
+      </button>`).join('')}</div>`;
   }
-  const depths = [...groups.keys()].sort((a, b) => a - b);
-  return depths.map((d, idx) => {
-    const nodes = groups.get(d) || [];
-    const row = `
-      <div class="evo-row">
-        ${nodes.map((n) => `
-          <div class="evo-node${n.is_special ? ' special' : ''}">
-            <img src="${n.image}" alt="${n.name}" />
-            <div>${n.name}</div>
+
+  const out = new Map();
+  const incoming = new Map();
+  for (const e of validEdges) {
+    if (!out.has(e.from)) out.set(e.from, []);
+    out.get(e.from).push(e);
+    incoming.set(e.to, (incoming.get(e.to) || 0) + 1);
+    if (!incoming.has(e.from)) incoming.set(e.from, incoming.get(e.from) || 0);
+  }
+
+  const roots = [...nodeMap.keys()].filter((id) => (incoming.get(id) || 0) === 0);
+  const chains = [];
+
+  const walk = (nodeId, chainNodes, chainEdges) => {
+    const nexts = out.get(nodeId) || [];
+    if (!nexts.length) {
+      chains.push({ nodes: [...chainNodes], edges: [...chainEdges] });
+      return;
+    }
+    for (const edge of nexts) {
+      chainNodes.push(edge.to);
+      chainEdges.push(edge);
+      walk(edge.to, chainNodes, chainEdges);
+      chainNodes.pop();
+      chainEdges.pop();
+    }
+  };
+
+  for (const root of roots.length ? roots : [validEdges[0].from]) {
+    walk(root, [root], []);
+  }
+
+  return chains.map((chain) => {
+    let html = '';
+    chain.nodes.forEach((nid, idx) => {
+      const n = nodeMap.get(nid);
+      html += `
+        <button class="evo-node${n.is_special ? ' special' : ''}" data-id="${n.pokemon_id}">
+          <img src="${n.image}" alt="${n.name}" />
+          <div>${n.name}</div>
+        </button>
+      `;
+      if (idx < chain.edges.length) {
+        const e = chain.edges[idx];
+        html += `
+          <div class="evo-link">
+            <div class="evo-cond">${e.condition || '진화'}</div>
+            <div class="evo-arrow-line">→</div>
           </div>
-        `).join('')}
-      </div>
-    `;
-    if (idx === depths.length - 1) return row;
-    return `${row}<div class="evo-arrow">↓</div>`;
+        `;
+      }
+    });
+    return `<div class="evo-chain-row">${html}</div>`;
   }).join('');
 }
 
@@ -153,13 +196,14 @@ function renderDetail(data) {
       </div>
 
       <h3>진화 트리</h3>
-      <div class="evo-tree">${renderEvolutionTree(data.evolution_tree || [])}</div>
+      <div class="evo-tree">${renderEvolutionTree(data.evolution_tree || [], data.evolution_edges || [])}</div>
     </section>
 
     <section class="card">
       <h3>레벨업 기술</h3>
       <p class="desc"><b>*</b> 표시는 6세대(ORAS) 이후 추가된 기술입니다.</p>
       <table class="info-table move-table">
+        <colgroup><col /><col /><col class="col-type" /><col /><col /><col /><col /><col /></colgroup>
         <thead><tr><th>레벨</th><th>기술명</th><th>타입</th><th>분류</th><th>위력</th><th>명중</th><th>PP</th><th>효과</th></tr></thead>
         <tbody>${tableRowsLevelMoves(data.level_moves || [])}</tbody>
       </table>
@@ -169,6 +213,7 @@ function renderDetail(data) {
       <h3>알기술</h3>
       <p class="desc"><b>*</b> 표시는 6세대(ORAS) 이후 추가된 기술입니다.</p>
       <table class="info-table move-table">
+        <colgroup><col /><col class="col-type" /><col /><col /><col /><col /><col /></colgroup>
         <thead><tr><th>기술명</th><th>타입</th><th>분류</th><th>위력</th><th>명중</th><th>PP</th><th>효과</th></tr></thead>
         <tbody>${tableRowsEggMoves(data.egg_moves)}</tbody>
       </table>
@@ -199,4 +244,15 @@ resultsEl.addEventListener('click', async (e) => {
   if (!li) return;
   const data = await loadPokemon(li.dataset.id);
   renderDetail(data);
+});
+
+detailEl.addEventListener('click', async (e) => {
+  const evoBtn = e.target.closest('.evo-node[data-id]');
+  if (evoBtn) {
+    const evoData = await loadPokemon(evoBtn.dataset.id);
+    renderDetail(evoData);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
+
 });

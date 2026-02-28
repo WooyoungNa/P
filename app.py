@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -64,6 +65,50 @@ def latest_localized_text(rows: list[dict[str, str]], id_key: str, text_key: str
     return {k: v[1] for k, v in out.items()}
 
 
+
+
+def clean_effect_text(text: str) -> str:
+    t = text.replace("\n", " ").strip()
+    t = re.sub(r"\[([^\]]+)\]\{[^}]+\}", r"\1", t)
+    t = t.replace("[", "").replace("]", "")
+    t = re.sub(r"\s+", " ", t)
+    return t.strip()
+
+
+def translate_en_to_ko(text: str) -> str:
+    t = clean_effect_text(text)
+    reps = [
+        ("Has a ", ""),
+        (" chance of ", " 확률로 "),
+        ("attacking Pokémon on contact", "접촉한 상대를 공격했을 때"),
+        ("Inflicts regular damage with no additional effect.", "추가 효과 없이 일반적인 데미지를 준다."),
+        ("Causes one-hit KO.", "일격에 상대를 쓰러뜨릴 수 있다."),
+        ("Prevents paralysis", "마비 상태가 되지 않는다"),
+        ("Protects against sandstorm damage", "모래바람 데미지를 받지 않는다"),
+        ("Increases evasion", "회피율이 상승한다"),
+        ("during a sandstorm", "모래바람일 때"),
+        ("Inflicts", "가한다"),
+        ("damage", "데미지"),
+        ("user", "사용자"),
+        ("target", "상대"),
+        ("Raises", "상승시킨다"),
+        ("Lowers", "낮춘다"),
+        ("and", "및"),
+    ]
+    for a,b in reps:
+        t = t.replace(a,b)
+    return t
+
+
+def choose_localized_text(ko_primary: str | None, ko_secondary: str | None, en_primary: str | None, en_secondary: str | None) -> str:
+    for cand in [ko_primary, ko_secondary]:
+        if cand and cand.strip():
+            return clean_effect_text(cand)
+    for cand in [en_primary, en_secondary]:
+        if cand and cand.strip():
+            return translate_en_to_ko(cand)
+    return "효과 정보가 없습니다."
+
 def fetch_csv(name: str) -> list[dict[str, str]]:
     url = f"{CSV_BASE}/{name}.csv"
     with urllib.request.urlopen(url, timeout=120) as res:
@@ -81,6 +126,7 @@ def ensure_db() -> None:
             ability_cols = {r[1] for r in con.execute("PRAGMA table_info(pokemon_ability)").fetchall()}
             level_cols = {r[1] for r in con.execute("PRAGMA table_info(pokemon_level_move)").fetchall()}
             evo_cols = {r[1] for r in con.execute("PRAGMA table_info(evolution_member)").fetchall()}
+            edge_cols = {r[1] for r in con.execute("PRAGMA table_info(evolution_edge)").fetchall()}
             con.close()
             has_new_schema = {
                 "display_name_ko",
@@ -94,7 +140,7 @@ def ensure_db() -> None:
                 "chain_id",
                 "pokemon_id",
                 "depth",
-            }.issubset(evo_cols)
+            }.issubset(evo_cols) and {"from_pokemon_id", "to_pokemon_id", "condition_text"}.issubset(edge_cols)
             if count > 0 and has_new_schema:
                 return
         except Exception:
@@ -187,6 +233,14 @@ def build_database(path: Path) -> None:
             is_special INTEGER,
             sort_order INTEGER
         );
+
+        CREATE TABLE evolution_edge (
+            chain_id INTEGER,
+            from_pokemon_id INTEGER,
+            to_pokemon_id INTEGER,
+            condition_text TEXT,
+            sort_order INTEGER
+        );
         """
     )
 
@@ -199,6 +253,11 @@ def build_database(path: Path) -> None:
     pokemon_forms = fetch_csv("pokemon_forms")
     form_names = fetch_csv("pokemon_form_names")
     version_groups = fetch_csv("version_groups")
+    pokemon_evolution = fetch_csv("pokemon_evolution")
+    evolution_triggers = fetch_csv("evolution_triggers")
+    evolution_trigger_prose = fetch_csv("evolution_trigger_prose")
+    items = fetch_csv("items")
+    item_names = fetch_csv("item_names")
 
     pokemon_stats = fetch_csv("pokemon_stats")
     stats = fetch_csv("stats")
@@ -300,7 +359,7 @@ def build_database(path: Path) -> None:
                 safe_int(r["pokemon_id"]),
                 safe_int(aid),
                 ability_name_ko.get(aid, ability_identifier.get(aid, "unknown")),
-                ability_flavor_ko.get(aid) or ability_effect_ko.get(aid) or ability_flavor_en.get(aid) or ability_effect_en.get(aid) or "효과 정보가 없습니다.",
+                choose_localized_text(ability_flavor_ko.get(aid), ability_effect_ko.get(aid), ability_flavor_en.get(aid), ability_effect_en.get(aid)),
                 1 if ability_generation.get(aid, 0) > 6 else 0,
                 safe_int(r.get("is_hidden"), 0),
             )
@@ -341,8 +400,7 @@ def build_database(path: Path) -> None:
         if not m:
             continue
 
-        effect_tpl = move_flavor_ko.get(r["move_id"]) or move_effect_ko.get(m["effect_id"]) or move_flavor_en.get(r["move_id"]) or move_effect_en.get(m["effect_id"]) or "효과 정보가 없습니다."
-        effect_text = effect_tpl.replace("$effect_chance", m["effect_chance"] or "-")
+        effect_text = choose_localized_text(move_flavor_ko.get(r["move_id"]), move_effect_ko.get(m["effect_id"]), move_flavor_en.get(r["move_id"]), move_effect_en.get(m["effect_id"])).replace("$effect_chance", m["effect_chance"] or "-")
         dmg_cls = damage_class_ko.get(m["damage_class_id"], damage_class_identifier.get(m["damage_class_id"], "미상"))
         is_post_oras = 1 if safe_int(m.get("generation_id"), 0) > 6 else 0
 
@@ -388,12 +446,26 @@ def build_database(path: Path) -> None:
     cur.executemany("INSERT INTO pokemon_egg_move VALUES(?,?,?,?,?,?,?,?,?,?)", egg_rows)
     cur.executemany("INSERT INTO pokemon_level_move VALUES(?,?,?,?,?,?,?,?,?,?)", level_rows)
 
-    # evolution tree members (includes forms; mega/gmax included explicitly)
+    # evolution tree members + edges
     chain_species: dict[int, list[str]] = defaultdict(list)
-    for s in species:
-        cid = safe_int(s.get("evolution_chain_id"), 0)
+    for sp in species:
+        cid = safe_int(sp.get("evolution_chain_id"), 0)
         if cid > 0:
-            chain_species[cid].append(s["id"])
+            chain_species[cid].append(sp["id"])
+
+    trigger_id_to_name = {r["id"]: r["identifier"] for r in evolution_triggers}
+    trigger_id_to_ko = {
+        r["evolution_trigger_id"]: (r.get("name") or r.get("evolution_trigger_id"))
+        for r in evolution_trigger_prose
+        if r.get("local_language_id") == ko_lang_id
+    }
+    item_id_to_name = {r["id"]: r["identifier"] for r in items}
+    item_id_to_ko = {
+        r["item_id"]: r.get("name") or item_id_to_name.get(r["item_id"], r["item_id"])
+        for r in item_names
+        if r.get("local_language_id") == ko_lang_id
+    }
+    evo_by_species = {r["evolved_species_id"]: r for r in pokemon_evolution}
 
     species_depth_cache: dict[tuple[str, int], int] = {}
 
@@ -410,11 +482,52 @@ def build_database(path: Path) -> None:
         return d
 
     pokemon_rows_by_species: dict[int, list[sqlite3.Row]] = defaultdict(list)
+    default_pokemon_by_species: dict[int, int] = {}
     con.row_factory = sqlite3.Row
-    for row in con.execute("SELECT p.*, f.is_default, f.is_mega, f.is_gmax, f.form_order, f.sort_order FROM pokemon p LEFT JOIN pokemon_form_meta f ON p.id=f.pokemon_id").fetchall():
+    all_p_rows = con.execute("SELECT p.*, f.is_default, f.is_mega, f.is_gmax, f.form_order, f.sort_order FROM pokemon p LEFT JOIN pokemon_form_meta f ON p.id=f.pokemon_id").fetchall()
+    for row in all_p_rows:
         pokemon_rows_by_species[row["species_id"]].append(row)
+        if (row["is_default"] or 0) == 1:
+            default_pokemon_by_species[row["species_id"]] = row["id"]
+
+    def evo_condition_text(evo: dict[str, str] | None) -> str:
+        if not evo:
+            return ""
+        min_level = safe_int(evo.get("minimum_level"), 0)
+        item_id = evo.get("trigger_item_id") or ""
+        held_item_id = evo.get("held_item_id") or ""
+        trigger_id = evo.get("evolution_trigger_id") or ""
+        known_move_type = evo.get("known_move_type_id") or ""
+        known_move = evo.get("known_move_id") or ""
+        location_id = evo.get("location_id") or ""
+        min_happiness = evo.get("minimum_happiness") or ""
+        time_of_day = evo.get("time_of_day") or ""
+
+        if min_level > 0:
+            return f"Lv.{min_level}"
+        if item_id:
+            return f"{item_id_to_ko.get(item_id, item_id_to_name.get(item_id, '진화아이템'))} 사용"
+        if held_item_id:
+            return f"{item_id_to_ko.get(held_item_id, item_id_to_name.get(held_item_id, '아이템'))} 지니고"
+        if min_happiness:
+            return f"친밀도 {min_happiness}+"
+        if known_move:
+            return "특정 기술 습득"
+        if known_move_type:
+            return "특정 타입 기술 습득"
+        if location_id:
+            return "특정 장소"
+        if time_of_day:
+            return f"{time_of_day}"
+        if trigger_id:
+            trig = trigger_id_to_ko.get(trigger_id, trigger_id_to_name.get(trigger_id, "진화"))
+            if trigger_id_to_name.get(trigger_id) == "trade":
+                return "교환"
+            return trig
+        return "진화"
 
     evo_rows = []
+    edge_rows = []
     for chain_id, species_ids in chain_species.items():
         for sid_text in species_ids:
             sid = safe_int(sid_text, 0)
@@ -427,7 +540,40 @@ def build_database(path: Path) -> None:
                     is_special = 1
                 evo_rows.append((chain_id, depth, prow["id"], prow["display_name_ko"], is_special, prow["sort_order"] or 99999))
 
+        # base species evolution edges
+        for sid_text in species_ids:
+            sid = safe_int(sid_text, 0)
+            parent_sid_text = species_parent.get(sid_text, "")
+            if not parent_sid_text:
+                continue
+            parent_sid = safe_int(parent_sid_text, 0)
+            from_pid = default_pokemon_by_species.get(parent_sid)
+            to_pid = default_pokemon_by_species.get(sid)
+            if not from_pid or not to_pid:
+                continue
+            evo = evo_by_species.get(sid_text)
+            cond = evo_condition_text(evo)
+            sort_order = (species_depth(sid_text, chain_id) * 10000) + to_pid
+            edge_rows.append((chain_id, from_pid, to_pid, cond, sort_order))
+
+        # special-form edges (mega/gmax/etc)
+        for sid_text in species_ids:
+            sid = safe_int(sid_text, 0)
+            base_pid = default_pokemon_by_species.get(sid)
+            if not base_pid:
+                continue
+            for prow in pokemon_rows_by_species.get(sid, []):
+                if prow["id"] == base_pid:
+                    continue
+                cond = "폼변화"
+                if (prow["is_mega"] or 0) == 1:
+                    cond = "메가진화"
+                elif (prow["is_gmax"] or 0) == 1:
+                    cond = "거다이맥스"
+                edge_rows.append((chain_id, base_pid, prow["id"], cond, (species_depth(sid_text, chain_id) * 10000) + (prow["sort_order"] or 99999)))
+
     cur.executemany("INSERT INTO evolution_member VALUES(?,?,?,?,?,?)", evo_rows)
+    cur.executemany("INSERT INTO evolution_edge VALUES(?,?,?,?,?)", edge_rows)
 
     con.commit()
     con.close()
@@ -577,6 +723,15 @@ class Handler(BaseHTTPRequestHandler):
                 """,
                 (p["evolution_chain_id"],),
             ).fetchall()
+            evolution_edges = con.execute(
+                """
+                SELECT from_pokemon_id, to_pokemon_id, condition_text
+                FROM evolution_edge
+                WHERE chain_id=?
+                ORDER BY sort_order, from_pokemon_id, to_pokemon_id
+                """,
+                (p["evolution_chain_id"],),
+            ).fetchall()
 
             payload = {
                 "id": p["id"],
@@ -634,6 +789,14 @@ class Handler(BaseHTTPRequestHandler):
                         "is_special": bool(r["is_special"]),
                     }
                     for r in evolution_rows
+                ],
+                "evolution_edges": [
+                    {
+                        "from": r["from_pokemon_id"],
+                        "to": r["to_pokemon_id"],
+                        "condition": r["condition_text"] or "진화",
+                    }
+                    for r in evolution_edges
                 ],
             }
             con.close()
