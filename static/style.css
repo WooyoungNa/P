@@ -1,0 +1,36 @@
+:root { color-scheme: light; }
+body { font-family: 'Noto Sans KR', system-ui, sans-serif; margin: 0; background: #f3f5fb; color: #182033; }
+main { max-width: 1200px; margin: 0 auto; padding: 18px; }
+h1 { margin: 0 0 10px; }
+input { width: 100%; padding: 10px 12px; font-size: 16px; border-radius: 8px; border: 1px solid #c7cfdf; }
+#results { list-style: none; padding: 0; margin: 10px 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+#results li { display: flex; justify-content: space-between; align-items: center; gap: 6px; background: white; border: 1px solid #d7deec; border-radius: 8px; padding: 7px 9px; cursor: pointer; }
+#results li:hover { background: #e9f1ff; }
+#results small { color: #6b7385; }
+
+.card { margin-top: 12px; background: white; border: 1px solid #d7deec; border-radius: 12px; padding: 12px; }
+.compact-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; }
+.panel h3 { margin: 10px 0 6px; }
+.identity { display: flex; gap: 12px; align-items: center; }
+.identity img { width: 148px; height: 148px; object-fit: contain; background: #f8fafc; border-radius: 8px; }
+.identity h2 { margin: 0; }
+.mono { color: #5e6678; margin: 4px 0 8px; }
+.desc { margin: 4px 0 8px; color: #3a475f; font-size: 14px; }
+
+.type-badge { display: inline-block; color: #fff; font-weight: 700; border-radius: 999px; padding: 3px 9px; margin: 2px 4px 2px 0; background: var(--type-color, #666); font-size: 12px; }
+.hidden-tag { display: inline-block; background: #6b21a8; color: #fff; border-radius: 999px; font-size: 11px; padding: 2px 7px; }
+
+.info-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.info-table th, .info-table td { border: 1px solid #d9e0ef; padding: 6px 7px; text-align: center; }
+.info-table .left { text-align: left; }
+.info-table thead th { background: #eef3ff; }
+.info-table tfoot th, .info-table tfoot td { background: #f3f6ff; font-weight: 700; }
+.stat-value { font-weight: 700; width: 50px; }
+.bar-track { background: #edf1fa; height: 10px; border-radius: 999px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 999px; }
+.matchup-block { display: grid; grid-template-columns: 76px 1fr; gap: 4px 10px; align-items: center; }
+.move-table td { vertical-align: top; }
+
+@media (max-width: 960px) {
+  .compact-grid { grid-template-columns: 1fr; }
+}
